@@ -1,3 +1,4 @@
+# Register the manual Pages release workflow on the master default branch.
 name: Publish GitHub Pages (manual)
 
 on:
