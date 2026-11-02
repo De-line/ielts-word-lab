@@ -1,250 +1,299 @@
 <script setup lang="ts">
-import vocabulary from './vocabulary'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { vocabularyCatalog } from '../../lib/vocabulary/catalog'
+import { characterFeedback } from '../../lib/vocabulary/typing'
+import type { TypingOutcome } from '../../lib/vocabulary/typing'
+import { useTypingPractice } from '../../lib/vocabulary/useTypingPractice'
 
-const CHAPTER_KEY = 'vocabulary_typing_chapter'
-const chapters = Object.keys(vocabulary)
-const selectedChapter = ref(localStorage.getItem(CHAPTER_KEY) || chapters[0])
+const emit = defineEmits<{ (event: 'outcome', outcome: TypingOutcome): void }>()
+const { state, inputElement, chooseGroup, focusInput, handleInput, compositionStart, compositionEnd, retry, skip, suspend, history, ready, mode, notice } = useTypingPractice(outcome => emit('outcome', outcome))
+const topic = computed(() => vocabularyCatalog.find(item => item.id === state.value.group?.topicId)!)
+const feedback = computed(() => characterFeedback(state.value.input, state.value.currentWord?.spellings ?? [], state.value.composing))
+const hasVisibleError = computed(() => feedback.value.some(char => char.status === 'error'))
+const audioMessage = ref('')
+let audio: HTMLAudioElement | null = null
+let audioGeneration = 0
+let audioTimer: ReturnType<typeof setTimeout> | null = null
+let active = true
 
-const currentWordIndex = ref(0)
-const userInput = ref('')
-const startTime = ref<number | null>(null)
-const wpm = ref(0)
-const accuracy = ref(100)
-const isFinished = ref(false)
-
-const words = computed(() => {
-  const chapter = (vocabulary as any)[selectedChapter.value]
-  if (!chapter)
-    return []
-  // Flatten groups into a single list of words
-  return chapter.words.flat()
-})
-
-const currentWordData = computed(() => words.value[currentWordIndex.value])
-const currentWord = computed(() => currentWordData.value?.word[0] || '')
-
-watch(selectedChapter, (newVal) => {
-  localStorage.setItem(CHAPTER_KEY, newVal)
-  reset()
-})
-
-function reset() {
-  currentWordIndex.value = 0
-  userInput.value = ''
-  startTime.value = null
-  wpm.value = 0
-  accuracy.value = 100
-  isFinished.value = false
-  playAudio()
-}
-
-let audio = null as HTMLAudioElement | null
-function playAudio() {
-  const category = selectedChapter.value
-  const word = currentWord.value
-  const audioPath = `vocabulary/audio/${category}/${word}.mp3`
+function stopAudio() {
+  audioGeneration++
+  if (audioTimer !== null)
+    clearTimeout(audioTimer)
+  audioTimer = null
   if (audio) {
+    audio.onerror = null
+    audio.onplaying = null
+    audio.onwaiting = null
+    audio.onstalled = null
     audio.pause()
-    audio.currentTime = 0
-  }
-  audio = document.createElement('audio')
-  audio.src = audioPath
-  audio.play()
-}
-
-// Normalize whitespace: replace non-breaking spaces and other unicode spaces with regular space
-function normalizeInput(s: string) {
-  return s.replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, ' ')
-}
-
-function handleInput(e: Event) {
-  if (!startTime.value)
-    startTime.value = Date.now()
-
-  const rawInput = (e.target as HTMLInputElement).value
-  const input = normalizeInput(rawInput)
-  userInput.value = input
-  // Sync normalized value back to DOM input
-  if (rawInput !== input)
-    (e.target as HTMLInputElement).value = input
-
-  // Calculate Accuracy
-  let correctChars = 0
-  for (let i = 0; i < input.length; i++) {
-    if (input[i] === currentWord.value[i])
-      correctChars++
-  }
-  accuracy.value = input.length > 0 ? Math.round((correctChars / input.length) * 100) : 100
-
-  // Calculate WPM (Words Per Minute)
-  // Standard: 1 word = 5 characters
-  const timeElapsed = (Date.now() - startTime.value) / 1000 / 60 // in minutes
-  if (timeElapsed > 0)
-    wpm.value = Math.round((input.length / 5) / timeElapsed)
-
-  // Check if finished
-  if (input === currentWord.value)
-    setTimeout(nextWord, 200)
-}
-
-function nextWord() {
-  if (currentWordIndex.value < words.value.length - 1) {
-    currentWordIndex.value++
-    userInput.value = ''
-    startTime.value = null
-    playAudio()
-  }
-  else {
-    isFinished.value = true
+    audio = null
   }
 }
 
-onMounted(() => {
-  reset()
+async function playAudio() {
+  stopAudio()
+  audioMessage.value = ''
+  const word = state.value.currentWord
+  if (!word)
+    return
+  const generation = audioGeneration
+  const player = document.createElement('audio')
+  audio = player
+  const failed = () => {
+    if (generation !== audioGeneration)
+      return
+    if (audioTimer !== null)
+      clearTimeout(audioTimer)
+    audioTimer = null
+    audioMessage.value = '音频暂不可用，可继续输入或点击重播。'
+  }
+  player.onerror = failed
+  const waiting = () => {
+    if (generation !== audioGeneration || audioTimer !== null)
+      return
+    audioTimer = setTimeout(() => {
+      audioTimer = null
+      if (generation === audioGeneration)
+        audioMessage.value = '音频加载超时，可继续输入或点击重播。'
+    }, 8000)
+  }
+  player.onwaiting = waiting
+  player.onstalled = waiting
+  player.onplaying = () => {
+    if (generation !== audioGeneration)
+      return
+    if (audioTimer !== null)
+      clearTimeout(audioTimer)
+    audioTimer = null
+    audioMessage.value = ''
+  }
+  player.src = word.audioPath
+  waiting()
+  try {
+    await player.play()
+  }
+  catch {
+    failed()
+  }
+}
+
+watch(() => state.value.attemptId, async () => {
+  await nextTick()
+  if (!active)
+    return
+  if (!state.value.finished)
+    focusInput()
+  await playAudio()
 })
+onMounted(playAudio)
+onBeforeUnmount(() => {
+  active = false
+  stopAudio()
+})
+
+function selectTopic(event: Event) {
+  chooseGroup((event.target as HTMLSelectElement).value)
+}
+function selectGroup(event: Event) {
+  chooseGroup(topic.value.id, Number((event.target as HTMLSelectElement).value))
+}
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
-    <div class="max-w-3xl mx-auto">
-      <!-- Header -->
-      <div class="flex justify-between items-center mb-8">
-        <div>
-          <h1 class="text-3xl font-extrabold text-gray-900 dark:text-white">单词打字练习</h1>
-          <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">照着背景单词输入，提升你的速度</p>
-        </div>
-        <select
-          v-model="selectedChapter"
-          class="block w-48 border border-gray-300 rounded-lg bg-white p-2.5 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-blue-500"
-        >
-          <option
-            v-for="c in chapters"
-            :key="c"
-            :value="c"
-          >{{ c }}</option>
+  <main class="practice mx-auto max-w-3xl px-4 py-6 sm:px-6">
+    <h1 class="mb-2 text-2xl font-bold sm:text-3xl">
+      单词打字练习
+    </h1>
+    <p class="mb-5 text-sm text-gray-500 dark:text-gray-400">
+      逐字反馈，正确后自动进入下一词；可以随时修改、重试或跳过。
+    </p>
+
+    <router-link to="/vocabulary/records" class="mb-4 inline-block text-blue-600 underline">
+      学习记录与备份
+    </router-link>
+    <p v-if="!ready" role="status">
+      正在读取本机练习记录…
+    </p>
+    <p v-if="history.error.value" class="mb-3 text-amber-700" role="alert">
+      {{ history.error.value }}
+    </p>
+    <p v-if="notice" class="mb-3" role="status">
+      {{ notice }}
+    </p>
+    <p v-if="mode === 'weak'" class="mb-3">
+      只复习薄弱词；成绩与整组练习共用，组统计仍按原组全部单词计算。
+    </p>
+
+    <div class="grid mb-5 gap-3 sm:grid-cols-2">
+      <label class="block text-sm font-medium">
+        主题
+        <select :value="topic.id" :disabled="!ready" class="practice-control mt-1" data-testid="topic-select" @change="selectTopic">
+          <option v-for="item in vocabularyCatalog" :key="item.id" :value="item.id">{{ item.label }}</option>
         </select>
-      </div>
+      </label>
+      <label class="block text-sm font-medium">
+        分组（每组 20 词）
+        <select :value="state.group?.number" :disabled="!ready" class="practice-control mt-1" data-testid="group-select" @change="selectGroup">
+          <option v-for="group in topic.groups" :key="group.id" :value="group.number">第 {{ group.number }} 组 · {{ group.entries.length }} 词</option>
+        </select>
+      </label>
+    </div>
 
-      <!-- Stats -->
-      <div class="grid grid-cols-3 gap-4 mb-8">
-        <div
-          class="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 text-center"
-        >
-          <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">准确率</div>
-          <div
-            class="text-2xl font-bold"
-            :class="accuracy < 90 ? 'text-red-500' : 'text-green-500'"
-          >{{ accuracy }}%</div>
-        </div>
-        <div
-          class="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 text-center"
-        >
-          <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">WPM (速度)</div>
-          <div class="text-2xl font-bold text-blue-500">{{ wpm }}</div>
-        </div>
-        <div
-          class="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 text-center"
-        >
-          <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">进度</div>
-          <div class="text-2xl font-bold dark:text-white">{{ currentWordIndex + 1 }} / {{ words.length }}</div>
-        </div>
-      </div>
+    <p class="mb-4 text-sm" data-testid="group-progress" aria-live="polite">
+      {{ topic.label }} · 第 {{ state.group?.number }} / {{ topic.groups.length }} 组
+      · 已练 {{ state.index }} / {{ state.group?.entries.length }} 词
+    </p>
 
-      <!-- Typing Area -->
-      <div
-        class="relative bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 min-h-80 flex flex-col items-center justify-center overflow-hidden"
-      >
-        <!-- Container for aligned layers -->
-        <div
-          class="relative font-mono text-4xl sm:text-6xl md:text-7xl font-black tracking-tighter whitespace-pre-wrap text-center break-all mb-8"
-        >
-          <!-- Background Word (Grey) -->
-          <div class="text-gray-100 dark:text-gray-700">
-            {{ currentWord }}
-          </div>
-
-          <!-- Feedback Layer (Overlay) -->
-          <div class="absolute inset-0 flex">
-            <span
-              v-for="(char, index) in currentWord"
-              :key="index"
-              class="inline-block"
-              :class="{
-                'text-green-500': userInput.charAt(Number(index)) === char,
-                'text-red-500': userInput.charAt(Number(index)) !== '' && userInput.charAt(Number(index)) !== char,
-                'text-transparent': userInput.charAt(Number(index)) === '',
-              }"
-            >
-              {{ char }}
-            </span>
-          </div>
-        </div>
-
-        <!-- Invisible Input covering the whole area -->
-        <input
-          type="text"
-          class="absolute inset-0 opacity-0 w-full h-full cursor-default caret-transparent"
-          autofocus
-          autocapitalize="off"
-          autocorrect="off"
-          autocomplete="off"
-          spellcheck="false"
-          v-model="userInput"
-          @input="handleInput"
-          :disabled="isFinished"
-        />
-
-        <!-- Meaning & Example (Hint) -->
-        <div class="w-full text-center border-t border-gray-100 dark:border-gray-700 pt-6">
-          <div class="text-xl font-medium text-gray-800 dark:text-gray-200 mb-2">
-            <span
-              style="font-style: italic; font-family: times;"
-              class="text-sm font-normal text-gray-400 mr-2 tracking-wide">
-              {{ currentWordData?.pos }}
-            </span>
-            {{ currentWordData?.meaning }}
-          </div>
-          <p class="text-gray-500 dark:text-gray-400 italic text-sm sm:text-base max-w-xl mx-auto">
-            {{ currentWordData?.example }}
-          </p>
-        </div>
-
-        <!-- Audio trigger hint -->
-        <div class="absolute top-4 right-4">
-          <button
-            @click="playAudio"
-            class="p-2 text-gray-400 hover:text-blue-500 transition-colors"
-          >
-            <i class="i-ph-speaker-high-bold text-xl block"></i>
-          </button>
-        </div>
-      </div>
-
-      <!-- Finish Overlay -->
-      <div
-        v-if="isFinished"
-        class="mt-8 bg-blue-600 text-white p-6 rounded-2xl text-center shadow-xl animate-bounce"
-      >
-        <h2 class="text-2xl font-bold mb-2">太棒了！恭喜完成本章练习 🎉</h2>
-        <button
-          @click="reset"
-          class="mt-4 bg-white text-blue-600 px-6 py-2 rounded-full font-bold hover:bg-blue-50 transition-colors"
-        >
-          再练一次
+    <section v-if="state.currentWord" class="practice-card border border-gray-200 rounded-xl bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:p-6">
+      <div class="mb-3 flex items-center justify-between gap-3">
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+          本组第 {{ state.index + 1 }} 词
+        </p>
+        <button type="button" class="practice-button" @click="playAudio">
+          重播发音
         </button>
       </div>
 
-      <!-- Instructions -->
-      <div class="mt-8 text-center text-gray-400 text-sm">
-        提示：直接开始输入即可，输入正确后会自动进入下一个单词。
+      <p v-if="audioMessage" class="mb-3 text-sm text-amber-700 dark:text-amber-400" role="status" data-testid="audio-status">
+        {{ audioMessage }}
+      </p>
+
+      <p class="mb-2 break-words text-lg font-medium" data-testid="accepted-spellings">
+        {{ state.currentWord.spellings.join(' / ') }}
+      </p>
+      <div class="character-feedback mb-5 text-3xl font-mono" data-testid="typing-feedback" aria-hidden="true">
+        <span v-for="(char, index) in feedback" :key="index" :data-status="char.status" :class="`character-${char.status}`">{{ char.value === ' ' ? '␣' : char.value }}</span>
       </div>
-    </div>
-  </div>
+
+      <label for="typing-input" class="mb-1 block text-sm font-medium">输入单词或词组</label>
+      <input
+        id="typing-input"
+        :key="state.sessionId"
+        ref="inputElement"
+        :value="state.input"
+        :disabled="!ready"
+        :data-attempt-id="state.attemptId"
+        type="text"
+        inputmode="text"
+        class="practice-control font-mono"
+        :class="{ 'input-error': hasVisibleError }"
+        data-testid="typing-input"
+        autocapitalize="off"
+        autocorrect="off"
+        autocomplete="off"
+        :spellcheck="false"
+        :aria-invalid="hasVisibleError"
+        aria-describedby="typing-status"
+        @input="handleInput"
+        @compositionstart="compositionStart"
+        @compositionend="compositionEnd"
+        @blur="suspend"
+        @focus="focusInput"
+      >
+      <p id="typing-status" class="mt-2 min-h-7 text-sm" role="status">
+        <template v-if="state.composing">
+          输入法组合中，确认候选词后再检查。
+        </template>
+        <template v-else-if="state.suspended">
+          已暂停自动跳词，点击“继续输入”恢复。
+        </template>
+        <template v-else-if="state.pending">
+          正确，正在进入下一词…
+        </template>
+        <template v-else-if="hasVisibleError">
+          请修改红色字符，包括末尾多余字符。
+        </template>
+        <template v-else>
+          空格、大小写、连字符和重音按原词拼写；␣ 表示空格。
+        </template>
+      </p>
+      <p v-if="state.hadError" class="mt-1 text-sm text-amber-700 dark:text-amber-400">
+        本词曾有输入错误，改对后记为“修正正确”。
+      </p>
+
+      <div class="my-4 flex flex-wrap gap-2">
+        <button type="button" class="practice-button primary-button" @click="focusInput">
+          继续输入
+        </button>
+        <button type="button" class="practice-button" data-testid="retry-word" :data-attempt-id="state.attemptId" @click="retry">
+          重试本词
+        </button>
+        <button type="button" class="practice-button" data-testid="skip-word" :data-attempt-id="state.attemptId" @click="skip">
+          跳过本词
+        </button>
+      </div>
+
+      <div class="border-t border-gray-200 pt-4 dark:border-gray-700">
+        <p><span class="mr-2 text-sm italic text-gray-500">{{ state.currentWord.pos }}</span>{{ state.currentWord.meaning }}</p>
+        <p class="mt-2 break-words text-sm italic text-gray-500 dark:text-gray-400">
+          {{ state.currentWord.example }}
+        </p>
+      </div>
+    </section>
+
+    <section v-else-if="state.finished" class="practice-card border border-gray-200 rounded-xl bg-white p-5 dark:border-gray-700 dark:bg-gray-800" data-testid="group-finished">
+      <h2 class="text-xl font-bold">
+        {{ mode === 'weak' ? '本次薄弱词练习已完成' : '本组已完成' }}
+      </h2>
+      <p class="my-3">
+        首次正确 {{ state.counts.first_correct }} · 修正正确 {{ state.counts.corrected }} · 跳过 {{ state.counts.skipped }}
+      </p>
+      <div class="flex flex-wrap gap-2">
+        <button class="practice-button" type="button" @click="chooseGroup(topic.id, state.group?.number, true)">
+          {{ mode === 'weak' ? '整组再练' : '再练本组' }}
+        </button>
+        <button v-if="state.group && state.group.number < topic.groups.length" class="practice-button primary-button" type="button" @click="chooseGroup(topic.id, state.group.number + 1)">
+          下一组
+        </button>
+      </div>
+    </section>
+
+    <p class="mt-5 text-sm text-gray-500 dark:text-gray-400">
+      {{ history.pending.value ? '正在自动保存…' : history.error.value ? '本次记录尚未可靠保存，请到学习记录页导出备份。' : '学习记录与进度自动保存在此浏览器，可刷新或稍后继续。' }}
+    </p>
+  </main>
 </template>
 
 <style scoped>
-/* Ensure the input always has focus or can be focused easily */
-.relative:focus-within {
-  @apply ring-4 ring-blue-500/20 border-blue-500;
+.practice-control {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  border: 1px solid #9ca3af;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 18px;
+  color: inherit;
+  background: transparent;
 }
+.practice-control:focus-visible,
+.practice-button:focus-visible {
+  outline: 3px solid #3b82f6;
+  outline-offset: 3px;
+}
+.practice-button {
+  min-height: 44px;
+  border: 1px solid #9ca3af;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 15px;
+}
+.primary-button {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: white;
+}
+.character-feedback {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.character-pending,
+.character-composing { color: #9ca3af; }
+.character-correct { color: #15803d; }
+.character-error { color: #dc2626; text-decoration: underline; }
+.input-error { border-color: #dc2626; }
+:global(.dark) .character-correct { color: #4ade80; }
+:global(.dark) .character-error { color: #f87171; }
 </style>

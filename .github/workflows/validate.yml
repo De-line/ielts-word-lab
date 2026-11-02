@@ -1,0 +1,63 @@
+name: Validate
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_call:
+    inputs:
+      upload_pages_artifact:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Install pinned pnpm and locked dependencies
+        run: |
+          npm install --global pnpm@8.6.10
+          pnpm install --frozen-lockfile
+      - name: Unit and component tests
+        run: pnpm run test --run
+      - name: Targeted lint
+        run: pnpm run lint:target
+      - name: Record existing global diagnostics
+        shell: bash
+        run: |
+          mkdir -p test-results
+          pnpm run typecheck > test-results/typecheck.log 2>&1 || type_status=$?
+          pnpm run lint > test-results/full-lint.log 2>&1 || lint_status=$?
+          printf 'Global typecheck exit: %s; global lint exit: %s\n' "${type_status:-0}" "${lint_status:-0}" >> "$GITHUB_STEP_SUMMARY"
+          node scripts/check-baseline.mjs
+      - name: Build and root-path browser regressions
+        env:
+          BROWSER_EXECUTABLE_PATH: /usr/bin/google-chrome
+        run: |
+          pnpm run build
+          pnpm run test:browser
+      - name: Build and verify Pages subpath
+        env:
+          BROWSER_EXECUTABLE_PATH: /usr/bin/google-chrome
+        run: |
+          pnpm run build:pages
+          pnpm run check:release
+          pnpm run test:release
+      - name: Upload only the reviewed static artifact
+        if: ${{ inputs.upload_pages_artifact == true && github.event_name != 'pull_request' }}
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: dist-pages
+          retention-days: 1

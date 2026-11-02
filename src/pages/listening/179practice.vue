@@ -25,7 +25,7 @@ function onKeydown(e, word) {
 
 function play(word) {
   const audio = document.createElement('audio')
-  audio.src = `/179_audios/${word}.mp3`
+  audio.src = `${import.meta.env.BASE_URL}179_audios/${word}.mp3`
   audio.play()
 }
 function next(index) {

@@ -1,4 +1,5 @@
 <script setup lang="ts" generic="T extends any, O extends any">
+const siteBase = import.meta.env.BASE_URL
 const menus = reactive([
   {
     label: '首页',
@@ -44,7 +45,7 @@ const showMobileMenu = ref(false)
     <nav class="fixed z-30 w-full border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
       <div class="mx-auto max-w-screen-2xl flex items-center justify-between">
         <div class="flex items-center justify-start">
-          <a href="/" class="mr-14 flex">
+          <a :href="siteBase" class="mr-14 flex">
             <span class="hidden self-center whitespace-nowrap text-2xl font-semibold sm:flex dark:text-white">My
               <span class="ml-1 text-red-600"> IELTS™</span>
             </span>

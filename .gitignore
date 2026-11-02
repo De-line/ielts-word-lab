@@ -9,3 +9,27 @@ node_modules
 *.log
 # git rm --cached auto-imports.d.ts
 auto-imports.d.ts
+test-results/
+ielts-word-lab-backup-*.json
+
+# Local configuration and secrets; examples can be reviewed and committed.
+.env
+.env.*
+!.env.example
+.npmrc.local
+*.pem
+*.key
+.vscode/
+.cache/
+.pnpm-store/
+coverage/
+playwright-report/
+dist-pages/
+backups/
+local-data/
+learning-records*.json
+learning-history*.json
+.npmrc
+.history/
+.tmp/
+*.tsbuildinfo

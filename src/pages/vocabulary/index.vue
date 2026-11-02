@@ -75,6 +75,7 @@ function calcStats() {
 
 onMounted(() => {
   loaded.value = true
+  document.addEventListener('keydown', onAudioKeydown)
 
   // 只能同时播放一个音频
   const audioTags = document.getElementsByTagName('audio')
@@ -95,11 +96,18 @@ onUpdated(() => {
     el.load()
 })
 
-document.addEventListener('keydown', (ev) => {
+function onAudioKeydown(ev) {
+  const target = ev.target
+  if (ev.defaultPrevented || ev.isComposing || ev.ctrlKey || ev.altKey || ev.metaKey)
+    return
+  if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), [role="textbox"]')))
+    return
   // 激活的那个音频可以通过方向键进行快进/退
   if (['ArrowLeft', 'ArrowRight', ' '].includes(ev.key)) {
-    ev.preventDefault()
     const audioTags = document.getElementsByTagName('audio')
+    if (!audioTags.length)
+      return
+    ev.preventDefault()
     const keyMap = {
       ArrowLeft: -5,
       ArrowRight: 5,
@@ -113,15 +121,20 @@ document.addEventListener('keydown', (ev) => {
       }
       if (ev.key === ' ') {
         if (audioTag.paused)
-          audioTag.play()
+          audioTag.play().catch(() => {})
         else
           audioTag.pause()
       }
     }
   }
-})
+}
 
 let audio = null
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onAudioKeydown)
+  audio?.pause()
+})
+
 function play(audioPath) {
   if (audio) {
     audio.pause()

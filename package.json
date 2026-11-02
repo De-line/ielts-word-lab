@@ -1,13 +1,20 @@
 {
+  "name": "ielts-word-lab",
   "private": true,
-  "packageManager": "pnpm@8.6.0",
+  "packageManager": "pnpm@8.6.10",
   "scripts": {
     "build": "vite build",
+    "build:pages": "vite build --mode pages",
+    "preview:pages": "vite preview --mode pages --host 127.0.0.1 --port 4176 --strictPort",
+    "test:release": "node test/browser/release.browser.mjs",
+    "check:release": "node scripts/check-release.mjs",
+    "lint:target": "eslint build/*.ts scripts/*.mjs vite.config.ts src/lib/vocabulary src/pages/vocabulary/typing.vue src/pages/vocabulary/records.vue test/vocabulary test/browser/*.mjs .github/workflows/*.yml",
     "dev": "vite --port 3333 --open",
     "lint": "eslint .",
     "typecheck": "vue-tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest",
+    "test:browser": "node test/browser/typing.browser.mjs",
     "up": "taze major -I"
   },
   "dependencies": {
@@ -29,6 +36,7 @@
     "eslint": "^8.42.0",
     "jsdom": "^22.1.0",
     "lint-staged": "^13.2.2",
+    "playwright-core": "1.62.1",
     "pnpm": "^8.6.0",
     "taze": "^0.10.2",
     "typescript": "^5.1.3",

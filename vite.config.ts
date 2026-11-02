@@ -8,9 +8,12 @@ import Components from 'unplugin-vue-components/vite'
 import AutoImport from 'unplugin-auto-import/vite'
 import UnoCSS from 'unocss/vite'
 import VueMacros from 'unplugin-vue-macros/vite'
+import { PAGES_BASE, PAGES_OUTPUT, pagesAssets } from './build/pages'
 
-export default defineConfig({
-  base: '',
+export default defineConfig(({ mode }) => ({
+  base: mode === 'pages' ? PAGES_BASE : '',
+  publicDir: mode === 'pages' ? false : 'public',
+  build: mode === 'pages' ? { outDir: PAGES_OUTPUT } : {},
   server: {
     host: '0.0.0.0',
     port: 3333,
@@ -21,6 +24,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    ...(mode === 'pages' ? [pagesAssets()] : []),
     VueMacros({
       defineOptions: false,
       defineModels: false,
@@ -65,4 +69,4 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
   },
-})
+}))
